@@ -4,80 +4,111 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
-backup_tasks = []
+class BackupApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Excel Auto Backup Manager")
 
-def force_copy(source_path, dest_path):
-    """Force copy a file using binary read/write."""
-    with open(source_path, 'rb') as src, open(dest_path, 'wb') as dst:
-        dst.write(src.read())
+        self.source_path = tk.StringVar()
+        self.dest_path = tk.StringVar()
+        self.interval = tk.IntVar(value=5)
+        self.method = tk.StringVar(value="Timestamped")
+        self.countdown = tk.StringVar(value="")
 
-def backup_file(source_path, dest_dir, interval_minutes):
-    source = Path(source_path)
-    dest = Path(dest_dir)
-    task_name = source.name
+        self.setup_ui()
+        self.backup_thread = None
+        self.stop_event = threading.Event()
 
-    while True:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"{source.stem}_{timestamp}{source.suffix}"
-        backup_path = dest / backup_filename
+    def setup_ui(self):
+        frame = ttk.Frame(self.root, padding=10)
+        frame.grid(row=0, column=0, sticky="nsew")
 
-        try:
-            force_copy(source, backup_path)
-            print(f"[{task_name}] Forced backup successful at {timestamp}")
-        except Exception as e:
-            print(f"[{task_name}] Forced backup failed: {e}")
+        ttk.Label(frame, text="Source Excel File:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.source_path, width=50).grid(row=0, column=1)
+        ttk.Button(frame, text="Browse", command=self.browse_source).grid(row=0, column=2)
 
-        time.sleep(interval_minutes * 60)
+        ttk.Label(frame, text="Destination Folder:").grid(row=1, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.dest_path, width=50).grid(row=1, column=1)
+        ttk.Button(frame, text="Browse", command=self.browse_dest).grid(row=1, column=2)
 
-def start_backup():
-    source_path = input("Enter the full path of the Excel file to back up: ").strip()
-    dest_dir = input("Enter the destination folder for backups: ").strip()
-    interval = int(input("Enter backup interval in minutes: ").strip())
+        ttk.Label(frame, text="Backup Interval (minutes):").grid(row=2, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.interval, width=10).grid(row=2, column=1, sticky="w")
 
-    if not os.path.exists(source_path):
-        print("❌ Source file does not exist.")
-        return
-    if not os.path.exists(dest_dir):
-        os.makedirs(dest_dir)
+        ttk.Label(frame, text="Backup Method:").grid(row=3, column=0, sticky="w")
+        ttk.Combobox(frame, textvariable=self.method, values=["Basic", "Timestamped"], state="readonly").grid(row=3, column=1, sticky="w")
 
-    thread = threading.Thread(target=backup_file, args=(source_path, dest_dir, interval), daemon=True)
-    thread.start()
+        ttk.Button(frame, text="Start Backup", command=self.start_backup).grid(row=4, column=1, pady=10)
 
-    backup_tasks.append({
-        "file": source_path,
-        "dest": dest_dir,
-        "interval": interval,
-        "thread": thread
-    })
+        ttk.Label(frame, text="Next Backup In:").grid(row=5, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.countdown).grid(row=5, column=1, sticky="w")
 
-    print(f"✅ Backup started for '{source_path}' every {interval} minutes.")
+        self.log = tk.Text(frame, height=10, width=70, state="disabled")
+        self.log.grid(row=6, column=0, columnspan=3, pady=10)
 
-def show_status():
-    print("\n📋 Current Backup Tasks:")
-    for i, task in enumerate(backup_tasks, 1):
-        print(f"{i}. File: {task['file']}")
-        print(f"   Destination: {task['dest']}")
-        print(f"   Interval: {task['interval']} minutes\n")
+    def browse_source(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+        if file_path:
+            self.source_path.set(file_path)
 
-def main():
-    print("=== Excel Auto Backup Manager ===")
-    while True:
-        print("\nOptions:")
-        print("1. Start new backup task")
-        print("2. Show current backup status")
-        print("3. Exit")
+    def browse_dest(self):
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            self.dest_path.set(folder_path)
 
-        choice = input("Select an option (1/2/3): ").strip()
-        if choice == "1":
-            start_backup()
-        elif choice == "2":
-            show_status()
-        elif choice == "3":
-            print("👋 Exiting backup manager.")
-            break
-        else:
-            print("❌ Invalid choice. Try again.")
+    def log_message(self, message):
+        self.log.config(state="normal")
+        self.log.insert("end", f"{datetime.now().strftime('%H:%M:%S')} - {message}\n")
+        self.log.see("end")
+        self.log.config(state="disabled")
+
+    def force_copy(self, source, destination):
+        with open(source, 'rb') as src, open(destination, 'wb') as dst:
+            dst.write(src.read())
+
+    def backup_loop(self, source, dest, interval, method):
+        while not self.stop_event.is_set():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            source_path = Path(source)
+            if method == "Basic":
+                backup_filename = source_path.name
+            else:
+                backup_filename = f"{source_path.stem}_{timestamp}{source_path.suffix}"
+            backup_path = Path(dest) / backup_filename
+
+            try:
+                self.force_copy(source, backup_path)
+                self.log_message(f"Backup successful: {backup_filename}")
+            except Exception as e:
+                self.log_message(f"Backup failed: {e}")
+
+            for remaining in range(interval * 60, 0, -1):
+                if self.stop_event.is_set():
+                    break
+                mins, secs = divmod(remaining, 60)
+                self.countdown.set(f"{mins:02}:{secs:02}")
+                time.sleep(1)
+
+    def start_backup(self):
+        source = self.source_path.get()
+        dest = self.dest_path.get()
+        interval = self.interval.get()
+        method = self.method.get()
+
+        if not os.path.exists(source):
+            messagebox.showerror("Error", "Source file does not exist.")
+            return
+        if not os.path.exists(dest):
+            os.makedirs(dest)
+
+        self.stop_event.clear()
+        self.backup_thread = threading.Thread(target=self.backup_loop, args=(source, dest, interval, method), daemon=True)
+        self.backup_thread.start()
+        self.log_message(f"Started backup for '{Path(source).name}' every {interval} minutes using '{method}' method.")
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = BackupApp(root)
+    root.mainloop()
