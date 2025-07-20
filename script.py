@@ -7,21 +7,26 @@ from pathlib import Path
 
 backup_tasks = []
 
+def force_copy(source_path, dest_path):
+    """Force copy a file using binary read/write."""
+    with open(source_path, 'rb') as src, open(dest_path, 'wb') as dst:
+        dst.write(src.read())
+
 def backup_file(source_path, dest_dir, interval_minutes):
     source = Path(source_path)
     dest = Path(dest_dir)
     task_name = source.name
 
     while True:
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_filename = f"{source.stem}_{timestamp}{source.suffix}"
-            backup_path = dest / backup_filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"{source.stem}_{timestamp}{source.suffix}"
+        backup_path = dest / backup_filename
 
-            shutil.copy2(source, backup_path)
-            print(f"[{task_name}] Backup successful at {timestamp}")
+        try:
+            force_copy(source, backup_path)
+            print(f"[{task_name}] Forced backup successful at {timestamp}")
         except Exception as e:
-            print(f"[{task_name}] Backup failed: {e}")
+            print(f"[{task_name}] Forced backup failed: {e}")
 
         time.sleep(interval_minutes * 60)
 
